@@ -70,6 +70,20 @@ usage-statistics-enabled: false
 # Proxy URL. Supports socks5/http/https protocols. Example: socks5://user:pass@192.168.1.1:1080/
 proxy-url: ''
 
+# Proxy pool (multiple proxies with rotation). Takes precedence over proxy-url when non-empty.
+# proxy-urls:
+#   - 'socks5://user1:pass1@proxy1.example.com:1080'
+#   - 'http://user2:pass2@proxy2.example.com:8080'
+#   - 'socks5://user3:pass3@proxy3.example.com:1080'
+
+# Proxy pool behavior configuration
+# proxy-pool:
+#   strategy: 'round-robin'                        # round-robin (default), random, least-failed
+#   health-check-interval: 60                      # seconds, 0 disables. Default: 60
+#   health-check-url: 'https://chatgpt.com/favicon.ico' # URL to probe. Default: chatgpt.com/favicon.ico
+#   max-failures: 3                                # consecutive failures before marking unhealthy. Default: 3
+
+
 # When true, unprefixed model requests only use credentials without a prefix (except when prefix == model name).
 force-model-prefix: false
 

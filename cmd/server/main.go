@@ -25,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/managementasset"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/proxypool"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/store"
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/translator"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/tui"
@@ -645,6 +646,22 @@ func main() {
 		} else {
       // Start the main proxy service
       managementasset.StartAutoUpdater(context.Background(), configFilePath)
+
+      // Initialize proxy pool if proxy-urls is configured
+      if len(cfg.ProxyURLs) > 0 {
+        poolCfg := proxypool.PoolConfig{
+          URLs:                cfg.ProxyURLs,
+          Strategy:            cfg.ProxyPoolConfig.Strategy,
+          HealthCheckInterval: cfg.ProxyPoolConfig.HealthCheckInterval,
+          HealthCheckURL:      cfg.ProxyPoolConfig.HealthCheckURL,
+          MaxFailures:         cfg.ProxyPoolConfig.MaxFailures,
+        }
+        pool := proxypool.InitPool(poolCfg)
+        if pool != nil {
+          proxypool.StartHealthCheck(pool, poolCfg)
+          defer pool.Stop()
+        }
+      }
 
       if cfg.AuthDir != "" {
         kiro.InitializeAndStart(cfg.AuthDir, cfg)

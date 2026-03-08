@@ -9,6 +9,13 @@ type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
 	ProxyURL string `yaml:"proxy-url" json:"proxy-url"`
 
+	// ProxyURLs is a list of proxy URLs for multi-proxy pool rotation.
+	// Takes precedence over ProxyURL when non-empty.
+	ProxyURLs []string `yaml:"proxy-urls" json:"proxy-urls"`
+
+	// ProxyPoolConfig configures the proxy pool behavior (strategy, health checking).
+	ProxyPoolConfig ProxyPoolSDKConfig `yaml:"proxy-pool" json:"proxy-pool"`
+
 	// ForceModelPrefix requires explicit model prefixes (e.g., "teamA/gemini-3-pro-preview")
 	// to target prefixed credentials. When false, unprefixed model requests may use prefixed
 	// credentials as well.
@@ -43,3 +50,19 @@ type StreamingConfig struct {
 	// <= 0 disables bootstrap retries. Default is 0.
 	BootstrapRetries int `yaml:"bootstrap-retries,omitempty" json:"bootstrap-retries,omitempty"`
 }
+
+// ProxyPoolSDKConfig holds proxy pool behavior configuration.
+type ProxyPoolSDKConfig struct {
+	// Strategy determines the selection algorithm: "round-robin" (default), "random", "least-failed".
+	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty"`
+
+	// HealthCheckInterval in seconds. 0 disables health checking. Default: 60.
+	HealthCheckInterval int `yaml:"health-check-interval,omitempty" json:"health-check-interval,omitempty"`
+
+	// HealthCheckURL is the URL to probe for health checks. Default: "https://chatgpt.com/favicon.ico".
+	HealthCheckURL string `yaml:"health-check-url,omitempty" json:"health-check-url,omitempty"`
+
+	// MaxFailures is the consecutive failure count before marking unhealthy. Default: 3.
+	MaxFailures int `yaml:"max-failures,omitempty" json:"max-failures,omitempty"`
+}
+

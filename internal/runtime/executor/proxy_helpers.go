@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/proxypool"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
@@ -43,9 +44,18 @@ func newProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *clip
 		proxyURL = strings.TrimSpace(auth.ProxyURL)
 	}
 
-	// Priority 2: Use cfg.ProxyURL if auth proxy is not configured
+	// Priority 2: Use proxy pool or cfg.ProxyURL if auth proxy is not configured
 	if proxyURL == "" && cfg != nil {
-		proxyURL = strings.TrimSpace(cfg.ProxyURL)
+		// Try proxy pool first (if configured with proxy-urls)
+		if pool := proxypool.DefaultPool(); pool != nil {
+			if poolURL := pool.Next(); poolURL != "" {
+				proxyURL = poolURL
+			}
+		}
+		// Fallback to single proxy-url
+		if proxyURL == "" {
+			proxyURL = strings.TrimSpace(cfg.ProxyURL)
+		}
 	}
 
 	// Build cache key from proxy URL (empty string for no proxy)
