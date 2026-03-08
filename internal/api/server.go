@@ -713,7 +713,144 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		}
 	}
 
-	c.File(filePath)
+	// Read the HTML and inject the proxy pool integration script
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+	html := string(data)
+	injection := proxyPoolInjectionScript()
+	html = strings.Replace(html, "</body>", injection+"</body>", 1)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, html)
+}
+
+// proxyPoolInjectionScript returns a <script> tag that injects a proxy pool
+// menu item and inline dashboard view into the management panel.
+func proxyPoolInjectionScript() string {
+	return `<script>
+(function(){
+  const POOL_HASH='#/proxy-pool';
+  const POOL_SVG='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>';
+
+  function getAuthHeaders(){
+    const h={'Content-Type':'application/json'};
+    // Try reading key from management panel's storage
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      const v=localStorage.getItem(k);
+      if(v&&v.startsWith('enc::v1::')){try{h['Authorization']='Bearer '+atob(v.replace('enc::v1::',''));return h;}catch(e){}}
+    }
+    const tryKeys=['proxy-pool-key','management-key','mgmt-key','secret-key'];
+    for(const tk of tryKeys){const v=localStorage.getItem(tk);if(v&&!v.startsWith('enc::')){h['Authorization']='Bearer '+v;return h;}}
+    return h;
+  }
+
+  function injectMenuItem(){
+    const navSections=document.querySelectorAll('.nav-section');
+    if(!navSections.length)return false;
+    const lastNav=navSections[navSections.length-1];
+    if(lastNav.querySelector('[data-pool-item]'))return true;
+    const a=document.createElement('a');
+    a.className='nav-item';a.href=POOL_HASH;a.setAttribute('data-pool-item','1');
+    a.innerHTML='<span class="nav-icon">'+POOL_SVG+'</span><span class="nav-label">代理池</span>';
+    lastNav.appendChild(a);
+    a.addEventListener('click',function(e){e.preventDefault();window.location.hash=POOL_HASH;renderPoolView();updateActive();});
+    return true;
+  }
+
+  function updateActive(){
+    document.querySelectorAll('.nav-item').forEach(function(el){
+      if(el.getAttribute('data-pool-item')){el.classList.toggle('active',window.location.hash===POOL_HASH);}
+      else{if(window.location.hash===POOL_HASH)el.classList.remove('active');}
+    });
+  }
+
+  async function fetchPoolData(){
+    try{
+      const r=await fetch('/v0/management/proxy-pool',{headers:getAuthHeaders()});
+      if(!r.ok)return null;
+      return await r.json();
+    }catch(e){return null;}
+  }
+
+  function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+  function buildPoolHTML(d){
+    if(!d)return '<div style="text-align:center;padding:60px 20px;color:#999"><p style="font-size:16px">⚠️ 无法获取代理池数据</p><p style="font-size:13px;margin-top:8px">请检查管理密钥和网络连接</p></div>';
+    const entries=d.entries||[];
+    const healthy=entries.filter(function(e){return e.healthy;}).length;
+    const cfg=d.config||{};
+    let html='<div style="padding:24px">';
+    // Header
+    html+='<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px"><h2 style="font-size:20px;font-weight:600;margin:0">🔄 代理池</h2>';
+    html+='<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;'+(d.enabled?'background:#dcfce7;color:#166534':'background:#fee2e2;color:#991b1b')+'">';
+    html+='<span style="width:6px;height:6px;border-radius:50%;background:'+(d.enabled?'#22c55e':'#ef4444')+'"></span>'+(d.enabled?'已启用':'未启用')+'</span>';
+    html+='<button id="poolRefreshBtn" style="margin-left:auto;padding:6px 14px;border-radius:8px;border:1px solid #d4c5b0;background:#fff;color:#4a3f35;font-size:13px;cursor:pointer">🔄 刷新</button></div>';
+    // Stats
+    html+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px">';
+    var stats=[['代理总数',entries.length],['健康',healthy],['不健康',entries.length-healthy],['策略',cfg.strategy||'round-robin']];
+    stats.forEach(function(s){html+='<div style="background:#faf7f5;border-radius:10px;padding:16px;text-align:center;border:1px solid #ede5db"><div style="font-size:24px;font-weight:700">'+esc(s[1])+'</div><div style="font-size:11px;color:#8b7355;margin-top:4px;text-transform:uppercase;letter-spacing:0.5px">'+s[0]+'</div></div>';});
+    html+='</div>';
+    // Table
+    if(entries.length===0){
+      html+='<div style="text-align:center;padding:48px;color:#999;background:#fff;border-radius:12px;border:1px solid #e8e0d8"><p style="font-size:32px;margin-bottom:8px">📭</p><p>代理池未配置</p><p style="font-size:12px;margin-top:4px;color:#bbb">在 config.yaml 中添加 proxy-urls 列表</p></div>';
+    }else{
+      html+='<div style="background:#fff;border-radius:12px;border:1px solid #e8e0d8;overflow:hidden"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+      html+='<tr style="background:#faf7f5"><th style="text-align:left;padding:10px 12px;font-size:11px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e8e0d8">代理 URL</th><th style="text-align:left;padding:10px 12px;font-size:11px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e8e0d8">状态</th><th style="text-align:left;padding:10px 12px;font-size:11px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e8e0d8">延迟</th><th style="text-align:left;padding:10px 12px;font-size:11px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e8e0d8">失败</th><th style="text-align:left;padding:10px 12px;font-size:11px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e8e0d8">最后检查</th></tr>';
+      entries.forEach(function(e){
+        var badge=e.healthy?'<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#dcfce7;color:#166534"><span style="width:6px;height:6px;border-radius:50%;background:#22c55e"></span>健康</span>':'<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#fee2e2;color:#991b1b"><span style="width:6px;height:6px;border-radius:50%;background:#ef4444"></span>不健康</span>';
+        html+='<tr><td style="padding:10px 12px;border-bottom:1px solid #f0e8dd;font-family:monospace;font-size:12px;word-break:break-all">'+esc(e.url)+'</td><td style="padding:10px 12px;border-bottom:1px solid #f0e8dd">'+badge+'</td><td style="padding:10px 12px;border-bottom:1px solid #f0e8dd;font-family:monospace;font-size:12px">'+(e.latency||'-')+'</td><td style="padding:10px 12px;border-bottom:1px solid #f0e8dd">'+e.failure_count+'</td><td style="padding:10px 12px;border-bottom:1px solid #f0e8dd">'+(e.last_check||'未检查')+'</td></tr>';
+      });
+      html+='</table></div>';
+    }
+    // Config
+    html+='<div style="margin-top:20px;background:#fff;border-radius:12px;border:1px solid #e8e0d8;padding:20px"><h3 style="font-size:14px;font-weight:600;margin-bottom:12px;color:#4a3f35">⚙️ 池配置</h3>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">';
+    var cfgItems=[['策略',cfg.strategy||'round-robin'],['健康检查间隔',(cfg.health_check_interval||60)+'s'],['检查 URL',cfg.health_check_url||'chatgpt.com/favicon.ico'],['最大失败次数',cfg.max_failures||3]];
+    cfgItems.forEach(function(ci){html+='<div style="background:#faf7f5;border-radius:8px;padding:10px;border:1px solid #ede5db"><div style="font-size:10px;color:#8b7355;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px">'+ci[0]+'</div><div style="font-size:13px;font-weight:600;color:#1a1a1a">'+esc(ci[1])+'</div></div>';});
+    html+='</div></div></div>';
+    return html;
+  }
+
+  async function renderPoolView(){
+    // Find the main content area (sibling of sidebar)
+    var main=document.querySelector('.main-content')||document.querySelector('main')||document.querySelector('.content');
+    if(!main){
+      // Fallback: find the element next to sidebar
+      var sidebar=document.querySelector('aside.sidebar')||document.querySelector('.sidebar');
+      if(sidebar&&sidebar.nextElementSibling)main=sidebar.nextElementSibling;
+      else if(sidebar&&sidebar.parentElement)main=sidebar.parentElement.querySelector(':scope > :not(aside):not(.sidebar)');
+    }
+    if(!main)return;
+    var d=await fetchPoolData();
+    main.innerHTML=buildPoolHTML(d);
+    var btn=document.getElementById('poolRefreshBtn');
+    if(btn)btn.addEventListener('click',renderPoolView);
+  }
+
+  // Watch for sidebar to appear and inject menu item
+  var observer=new MutationObserver(function(){
+    if(injectMenuItem()){
+      if(window.location.hash===POOL_HASH){renderPoolView();updateActive();}
+    }
+  });
+  observer.observe(document.body,{childList:true,subtree:true});
+
+  // Handle hash changes
+  window.addEventListener('hashchange',function(){
+    if(window.location.hash===POOL_HASH){renderPoolView();updateActive();}
+    else{updateActive();}
+  });
+
+  // Initial check
+  setTimeout(function(){
+    injectMenuItem();
+    if(window.location.hash===POOL_HASH){renderPoolView();updateActive();}
+  },500);
+})();
+</script>`
 }
 
 func (s *Server) enableKeepAlive(timeout time.Duration, onTimeout func()) {

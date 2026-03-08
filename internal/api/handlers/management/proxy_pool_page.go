@@ -98,11 +98,35 @@ tr:hover td{background:#fdfbf9}
 const API_BASE=window.location.origin;
 let autoTimer=null;
 let countdown=10;
-let mgmtKey=localStorage.getItem('management-key')||'';
+let mgmtKey='';
+let authRetries=0;
 
+// Try to read key from management panel's storage formats
+function loadKey(){
+  // Try our own storage first
+  let k=localStorage.getItem('proxy-pool-key')||'';
+  if(k)return k;
+  // Try management panel's obfuscated format (enc::v1::base64)
+  for(let i=0;i<localStorage.length;i++){
+    const key=localStorage.key(i);
+    const val=localStorage.getItem(key);
+    if(val&&val.startsWith('enc::v1::')){
+      try{return atob(val.replace('enc::v1::',''));}catch(e){}
+    }
+  }
+  // Try common key names
+  const tryKeys=['management-key','mgmt-key','secret-key','api-management-key'];
+  for(const tk of tryKeys){
+    const v=localStorage.getItem(tk);
+    if(v&&!v.startsWith('enc::'))return v;
+  }
+  return '';
+}
+
+mgmtKey=loadKey();
 if(!mgmtKey){
   mgmtKey=prompt('请输入管理密钥 (Management Key):','');
-  if(mgmtKey)localStorage.setItem('management-key',mgmtKey);
+  if(mgmtKey)localStorage.setItem('proxy-pool-key',mgmtKey);
 }
 
 function headers(){
@@ -115,10 +139,16 @@ async function fetchPool(){
   try{
     const r=await fetch(API_BASE+'/v0/management/proxy-pool',{headers:headers()});
     if(r.status===401||r.status===403){
-      mgmtKey=prompt('管理密钥无效，请重新输入:','');
-      if(mgmtKey){localStorage.setItem('management-key',mgmtKey);return fetchPool();}
+      if(authRetries<2){
+        authRetries++;
+        localStorage.removeItem('proxy-pool-key');
+        localStorage.removeItem('management-key');
+        mgmtKey=prompt('管理密钥无效('+r.status+')，请重新输入:','');
+        if(mgmtKey){localStorage.setItem('proxy-pool-key',mgmtKey);return fetchPool();}
+      }
       return null;
     }
+    authRetries=0;
     return await r.json();
   }catch(e){
     console.error('fetch error:',e);
