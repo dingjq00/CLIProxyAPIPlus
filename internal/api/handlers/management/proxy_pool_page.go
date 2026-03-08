@@ -240,8 +240,7 @@ if(document.getElementById('autoRefresh').checked)startAuto();
 </body>
 </html>`
 
-// ServeProxyPoolPage serves the embedded proxy pool dashboard HTML page.
+// ServeProxyPoolPage redirects to the integrated proxy pool view in the management panel.
 func (h *Handler) ServeProxyPoolPage(c *gin.Context) {
-	c.Header("Content-Type", "text/html; charset=utf-8")
-	c.String(http.StatusOK, proxyPoolPageHTML)
+	c.Redirect(http.StatusFound, "/management.html#/proxy-pool")
 }
